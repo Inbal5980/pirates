@@ -2,270 +2,318 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>סקילז (Skillz) - פיראטים</title>
-    <!-- טעינת ספריות עיצוב וקוד -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skillz Pirates - Crew Onboarding</title>
+    
+    <!-- CDNs for React, Tailwind, and Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- פונטים ואיקונים -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;700&display=swap" rel="stylesheet">
     
     <style>
-        body { font-family: 'Assistant', sans-serif; overflow-x: hidden; }
-        .glass-effect { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); }
-        .pirate-gradient { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
-        .animate-float { animation: float 3s ease-in-out infinite; }
-        @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;700;800&display=swap');
+        
+        body {
+            font-family: 'Assistant', sans-serif;
+            background-color: #020617;
+        }
+
+        .animate-spin-slow {
+            animation: spin 8s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 10px;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 m-0 p-0">
+<body>
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- הגדרות ליבה ---
-        const apiKey = "AIzaSyCxejliuGdzis9rFxPHELjLgNBdwbhkoKQ"; 
-        const googleScriptUrl = "https://script.google.com/macros/s/AKfycbyCRjV9cljtANAiAJX4gIVwr-deYISSLIQOOT_-E2Xlkcaxo-b7MQLaLjyOOlUsIOwiFA/exec";
+        // --- CONFIGURATION ---
+        // לשים כאן את ה-API Key שלך כדי שהאפליקציה תעבוד ב-Netlify
+        const apiKey = "AIzaSyBsoGEngzr3NjAL685aKvKjUFEkgzwr-7MS"; 
 
-        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-        // פונקציית יצירת התמונה
-        const generatePirateImage = async (base64Image, role, mimeType = "image/jpeg") => {
-          let description = "a person with unique facial features";
-          
-          try {
-            const visionResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{
-                  parts: [
-                    { text: "Describe this person's facial features (gender, hair, eyes, accessories like glasses) in one short sentence starting with 'A person with...'. Be very brief." },
-                    { inlineData: { mimeType, data: base64Image } }
-                  ]
-                }]
-              })
-            });
-            const visionData = await visionResponse.json();
-            description = visionData.candidates?.[0]?.content?.parts?.[0]?.text || description;
-          } catch (e) { console.error("Vision error:", e); }
-
-          const prompt = `A high-quality 3D Pixar-style digital render of a pirate character. ${description}. The pirate is dressed in modern professional pirate attire and is holding or wearing an item related to their role as a ${role}. Clean blurred background, vibrant lighting, centered portrait.`;
-
-          try {
-            const imgResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                instances: { prompt: prompt },
-                parameters: { sampleCount: 1 }
-              })
-            });
-
-            if (!imgResponse.ok) throw new Error(`Imagen API Error ${imgResponse.status}`);
-            
-            const result = await imgResponse.json();
-            if (result.predictions && result.predictions[0]) {
-                return `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+        const fetchWithRetry = async (url, options, retries = 5) => {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.ok) return response;
+                    if (response.status !== 429 && response.status < 500) throw new Error(`API error: ${response.status}`);
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                }
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
             }
-            return null;
-          } catch (error) {
-            console.error("Image generation error:", error);
-            return null;
-          }
         };
 
         const App = () => {
-          const [step, setStep] = useState(0);
-          const [messages, setMessages] = useState([
-            { sender: 'bot', text: 'אהוי חבר סיפון! 🏴‍☠️ ברוכים הבאים למפגש החברה של סקילז (Skillz). אני כאן כדי להפוך אותך לפיראט אמיתי! מוכן לצאת להפלגה?' }
-          ]);
-          const [inputText, setInputText] = useState('');
-          const [userData, setUserData] = useState({ name: '', role: '', projects: '' });
-          const [isGenerating, setIsGenerating] = useState(false);
-          const [generatedImage, setGeneratedImage] = useState(null);
-          const [isConfirmed, setIsConfirmed] = useState(false);
-          const messagesEndRef = useRef(null);
+            const [step, setStep] = useState(0); 
+            const [messages, setMessages] = useState([
+                { sender: 'bot', text: 'אהוי חבר סיפון! 🏴‍☠️ ברוכים הבאים למפגש החברה של סקילז. אני כאן כדי להפוך אותך לפיראט אמיתי! מוכן לצאת להפלגה?' }
+            ]);
+            const [inputText, setInputText] = useState('');
+            const [userData, setUserData] = useState({ name: '', role: '', projects: '' });
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [generatedImage, setGeneratedImage] = useState(null);
+            const [error, setError] = useState(null);
+            const [isConfirmed, setIsConfirmed] = useState(false);
+            
+            const messagesEndRef = useRef(null);
+            const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 
-          useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages, isGenerating]);
 
-          const addBotMessage = (text) => {
-            setTimeout(() => { setMessages(prev => [...prev, { sender: 'bot', text }]); }, 600);
-          };
-
-          const handleSend = (e) => {
-            e.preventDefault();
-            if (!inputText.trim()) return;
-
-            const text = inputText.trim();
-            setMessages(prev => [...prev, { sender: 'user', text }]);
-            setInputText('');
-
-            if (step === 1) {
-              setUserData(p => ({ ...p, name: text }));
-              addBotMessage(`שם של קפטנים, ${text}! ומה התפקיד שלך בספינת סקילז?`);
-              setStep(2);
-            } else if (step === 2) {
-              setUserData(p => ({ ...p, role: text }));
-              addBotMessage('מרשים מאוד. ועל איזה פרויקטים מרכזיים עבדת בחודשים האחרונים?');
-              setStep(3);
-            } else if (step === 3) {
-              setUserData(p => ({ ...p, projects: text }));
-              addBotMessage('שלל מרשים בהחלט! 💰 עכשיו, צלם או העלה תמונת פנים ברורה כדי שנתאים את הדמות למראה שלך.');
-              setStep(4);
-            }
-          };
-
-          const handlePhoto = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
-              const base64 = ev.target.result.split(',')[1];
-              setMessages(prev => [...prev, { sender: 'user', text: 'העליתי תמונה!', isImg: true, url: ev.target.result }]);
-              setIsGenerating(true);
-              
-              const pirateImg = await generatePirateImage(base64, userData.role);
-              
-              if (pirateImg) {
-                setGeneratedImage(pirateImg);
-                addBotMessage('הו הא! תראו את הפיראט הזה! 🏴‍☠️ הנה הסיכום של הנתונים שלך לאישור:');
-                setStep(5);
-              } else {
-                addBotMessage('סערה בים! משהו השתבש ביצירת התמונה. ודאי שמפתח ה-API תקין ושיש חיבור אינטרנט יציב, ונסי שוב.');
-              }
-              setIsGenerating(false);
+            const addBotMessage = (text) => {
+                setTimeout(() => {
+                    setMessages(prev => [...prev, { sender: 'bot', text }]);
+                }, 600);
             };
-            reader.readAsDataURL(file);
-          };
 
-          const finalizeAndSave = () => {
-            setIsConfirmed(true);
-            if (googleScriptUrl) {
-              fetch(googleScriptUrl, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({ ...userData, imageUrl: "תמונה הופקה" })
-              });
-            }
-            addBotMessage('הנתונים נשמרו בהצלחה בספר הספינה! תתחדש על תמונת הפרופיל החדשה שלך.');
-          };
+            const handleSend = (e) => {
+                e?.preventDefault();
+                if (!inputText.trim() || isGenerating) return;
 
-          return (
-            <div className="flex flex-col h-screen relative overflow-hidden">
-              <div className="fixed inset-0 bg-[url('https://i.imgur.com/DqpMeCD.png')] bg-cover bg-center -z-20"></div>
-              <div className="fixed inset-0 bg-slate-950/70 -z-10"></div>
+                const text = inputText.trim();
+                setMessages(prev => [...prev, { sender: 'user', text }]);
+                setInputText('');
 
-              <header className="glass-effect p-4 border-b border-amber-500/30 flex items-center justify-between shadow-xl z-10">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 pirate-gradient rounded-full flex items-center justify-center border border-amber-400">
-                    <i className="fas fa-skull-crossbones text-white"></i>
-                  </div>
-                  <div className="text-right">
-                    <h1 className="font-bold text-amber-500 text-lg">Skillz Pirates</h1>
-                    <p className="text-[10px] text-slate-400">מפגש חברה - ספינת סקילז</p>
-                  </div>
-                </div>
-                <i className="fas fa-anchor text-amber-700/50 text-xl animate-float"></i>
-              </header>
+                if (step === 1) {
+                    setUserData(prev => ({ ...prev, name: text }));
+                    addBotMessage(`שם של קפטנים, ${text}! 🦜 ומה התפקיד שלך בספינת סקילז?`);
+                    setStep(2);
+                } else if (step === 2) {
+                    setUserData(prev => ({ ...prev, role: text }));
+                    addBotMessage('מרשים מאוד. על אילו פרויקטים מרכזיים עבדת בחודשים האחרונים?');
+                    setStep(3);
+                } else if (step === 3) {
+                    setUserData(prev => ({ ...prev, projects: text }));
+                    addBotMessage('שלל מרשים בהחלט! 💰 עכשיו, העלה תמונת פנים ברורה כדי שנוכל לבנות את האווטאר שלך.');
+                    setStep(4);
+                }
+            };
 
-              <main className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
-                {messages.map((m, i) => (
-                  <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] p-3 rounded-2xl shadow-lg ${m.sender === 'user' ? 'bg-amber-600 text-white rounded-br-none' : 'glass-effect border border-slate-700 text-slate-200 rounded-bl-none'}`}>
-                      {m.isImg ? <img src={m.url} className="w-48 rounded-lg border-2 border-amber-500" /> : <p className="text-sm leading-relaxed">{m.text}</p>}
-                    </div>
-                  </div>
-                ))}
-                
-                {isGenerating && (
-                  <div className="flex justify-start">
-                    <div className="glass-effect border border-slate-700 p-3 rounded-2xl flex items-center gap-3">
-                      <i className="fas fa-compass text-amber-500 animate-spin"></i>
-                      <span className="text-xs text-amber-400 font-bold">הקפטן מעבד את התמונה...</span>
-                    </div>
-                  </div>
-                )}
-                
-                {step === 5 && (
-                  <div className="flex flex-col items-center gap-5 mt-4 animate-float">
-                    <div className="p-2 bg-amber-500 rounded-2xl shadow-2xl">
-                        <img src={generatedImage} className="w-64 h-64 object-cover rounded-xl border-4 border-slate-900" alt="Pirate Avatar" />
-                    </div>
+            const handleImageUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    const base64Data = event.target.result.split(',')[1];
+                    setMessages(prev => [...prev, { sender: 'user', text: 'העליתי תמונה!', isImg: true, url: event.target.result }]);
+                    setIsGenerating(true);
+                    setError(null);
+
+                    try {
+                        const visionPrompt = "Describe this person's facial features (gender, hair color/style, eyes, facial hair, glasses) very briefly in one sentence starting with 'A person with...'. Focus on features that define a character's look.";
+                        
+                        const visionResponse = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{
+                                    parts: [
+                                        { text: visionPrompt },
+                                        { inlineData: { mimeType: file.type, data: base64Data } }
+                                    ]
+                                }]
+                            })
+                        });
+
+                        const visionResult = await visionResponse.json();
+                        const description = visionResult.candidates?.[0]?.content?.parts?.[0]?.text || "A person with professional features";
+
+                        const imagePrompt = `A high-quality 3D Disney/Pixar style digital render of a charismatic pirate character. ${description}. The character is wearing modern-styled ornate pirate captain clothing with gold accents. They are in a heroic pose, looking into the distance. Cinematic lighting, vibrant colors, soft blurred tropical background. High resolution, 8k render style.`;
+
+                        const imgResponse = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                instances: { prompt: imagePrompt },
+                                parameters: { sampleCount: 1 }
+                            })
+                        });
+
+                        const imgResult = await imgResponse.json();
+                        if (imgResult.predictions?.[0]?.bytesBase64Encoded) {
+                            const generatedUrl = `data:image/png;base64,${imgResult.predictions[0].bytesBase64Encoded}`;
+                            setGeneratedImage(generatedUrl);
+                            setStep(5);
+                            addBotMessage('הו הא! תראו את הפיראט הזה! 🏴‍☠️ הנה כרטיס הקברניט החדש שלך:');
+                        } else {
+                            throw new Error("נראה שהים סוער מדי... בדוק אם ה-API Key תקין.");
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        setError(err.message);
+                        addBotMessage('סערה בים! משהו השתבש ביצירת הדמות. נסה שוב.');
+                    } finally {
+                        setIsGenerating(false);
+                    }
+                };
+                reader.readAsDataURL(file);
+            };
+
+            return (
+                <div className="flex flex-col h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden" dir="rtl">
+                    <div className="fixed inset-0 pointer-events-none opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent"></div>
                     
-                    <div className="w-full max-w-sm glass-effect rounded-xl overflow-hidden border border-slate-700 shadow-xl">
-                        <table className="w-full text-xs text-right">
-                            <tbody>
-                                <tr className="border-b border-slate-700">
-                                    <td className="p-3 text-amber-500 font-bold w-24">שם מלא</td>
-                                    <td className="p-3 text-slate-300">{userData.name}</td>
-                                </tr>
-                                <tr className="border-b border-slate-700">
-                                    <td className="p-3 text-amber-500 font-bold">תפקיד</td>
-                                    <td className="p-3 text-slate-300">{userData.role}</td>
-                                </tr>
-                                <tr>
-                                    <td className="p-3 text-amber-500 font-bold">פרויקטים</td>
-                                    <td className="p-3 text-slate-300">{userData.projects}</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                    <header className="relative z-10 bg-slate-900/80 backdrop-blur-md border-b border-amber-500/30 p-4 flex items-center justify-between shadow-2xl">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/20">
+                                <i className="fa-solid fa-ship text-slate-950 text-xl"></i>
+                            </div>
+                            <div>
+                                <h1 className="text-lg font-bold text-amber-500 tracking-tight">Skillz Pirates</h1>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Crew Onboarding System</p>
+                            </div>
+                        </div>
+                        <i className="fa-solid fa-anchor text-amber-500/40 text-xl"></i>
+                    </header>
 
-                    {!isConfirmed ? (
-                        <button onClick={finalizeAndSave} className="w-full pirate-gradient py-3 rounded-xl font-bold text-slate-950 flex items-center justify-center gap-2">
-                            <i className="fas fa-check"></i> אישור ושמירת נתונים
-                        </button>
-                    ) : (
-                        <a href={generatedImage} download={`Pirate_${userData.name}.png`} className="w-full pirate-gradient py-3 rounded-xl font-bold text-slate-950 flex items-center justify-center gap-2">
-                            <i className="fas fa-download"></i> הורד תמונת פרופיל
-                        </a>
-                    )}
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </main>
+                    <main className="flex-1 overflow-y-auto p-4 space-y-4 pb-32 relative z-0 custom-scrollbar">
+                        {messages.map((m, i) => (
+                            <div key={i} className={`flex ${m.sender === 'user' ? 'justify-start flex-row-reverse' : 'justify-start'} fade-in`}>
+                                <div className={`max-w-[85%] p-4 rounded-2xl shadow-xl ${
+                                    m.sender === 'user' 
+                                        ? 'bg-amber-600 text-white rounded-tr-none' 
+                                        : 'bg-slate-900/90 border border-slate-800 text-slate-200 rounded-tl-none backdrop-blur-sm'
+                                }`}>
+                                    {m.isImg ? (
+                                        <div className="space-y-2">
+                                            <img src={m.url} className="w-48 h-48 object-cover rounded-lg border-2 border-amber-500/50" />
+                                            <p className="text-xs opacity-70">מעבד תמונה...</p>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm leading-relaxed font-medium">{m.text}</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
 
-              <footer className="glass-effect border-t border-slate-800 p-4 fixed bottom-0 w-full z-20">
-                <div className="max-w-2xl mx-auto">
-                  {step === 0 && (
-                    <button onClick={() => { setStep(1); addBotMessage('מעולה! בוא נתחיל. מה שמך המלא, שודד ים?'); }} className="w-full pirate-gradient py-4 rounded-xl font-bold text-slate-950 shadow-lg text-lg">
-                        מוכנים להפלגה! ⚓
-                    </button>
-                  )}
-                  
-                  {step > 0 && step < 4 && (
-                    <form onSubmit={handleSend} className="flex gap-2">
-                      <input type="text" value={inputText} onChange={e => setInputText(e.target.value)} placeholder="הקלד כאן..." className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:border-amber-500 outline-none text-white" autoFocus />
-                      <button type="submit" className="pirate-gradient w-12 h-12 rounded-xl flex items-center justify-center text-slate-950 text-xl"><i className="fas fa-paper-plane"></i></button>
-                    </form>
-                  )}
+                        {isGenerating && (
+                            <div className="flex justify-start fade-in">
+                                <div className="bg-slate-900/90 border border-amber-500/30 p-4 rounded-2xl rounded-tl-none flex items-center gap-4 shadow-xl">
+                                    <i className="fa-solid fa-compass text-amber-500 text-2xl animate-spin-slow"></i>
+                                    <div>
+                                        <span className="text-sm text-amber-400 font-bold block">הקפטן מנווט בים הנתונים...</span>
+                                        <span className="text-[10px] text-slate-500 italic">יוצר אווטאר פיראט מותאם אישית</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
-                  {step === 4 && !isGenerating && (
-                    <div className="relative">
-                      <input type="file" accept="image/*" onChange={handlePhoto} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
-                      <button className="w-full pirate-gradient py-4 rounded-xl font-bold text-slate-950 shadow-lg flex items-center justify-center gap-2">
-                        <i className="fas fa-upload"></i> העלה תמונה
-                      </button>
-                    </div>
-                  )}
-                  
-                  {step === 5 && isConfirmed && (
-                    <button onClick={() => window.location.reload()} className="w-full border border-slate-700 py-3 rounded-xl text-xs text-slate-500 hover:text-slate-300">התחל מהתחלה</button>
-                  )}
+                        {step === 5 && generatedImage && (
+                            <div className="mt-6 flex flex-col items-center gap-6 fade-in">
+                                <div className="relative group p-2 bg-gradient-to-b from-amber-400 to-amber-700 rounded-3xl shadow-2xl">
+                                    <img src={generatedImage} className="w-72 h-72 object-cover rounded-2xl border-4 border-slate-950 shadow-inner" />
+                                    <div className="absolute bottom-4 left-4 right-4 bg-slate-950/80 backdrop-blur-md p-3 rounded-xl border border-amber-500/50">
+                                        <p className="text-center font-bold text-amber-500 text-sm truncate">{userData.name}</p>
+                                        <p className="text-center text-[10px] text-slate-300 uppercase">{userData.role}</p>
+                                    </div>
+                                </div>
+
+                                <div className="w-full max-w-sm bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl p-4 space-y-3">
+                                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                                        <span className="text-amber-500 text-xs font-bold">קפטן:</span>
+                                        <span className="text-slate-200 text-sm">{userData.name}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                                        <span className="text-amber-500 text-xs font-bold">תפקיד:</span>
+                                        <span className="text-slate-200 text-sm">{userData.role}</span>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <span className="text-amber-500 text-xs font-bold">פרויקטים:</span>
+                                        <p className="text-slate-300 text-xs leading-relaxed italic">"{userData.projects}"</p>
+                                    </div>
+                                </div>
+
+                                <a href={generatedImage} download={`Pirate_${userData.name}.png`} 
+                                   className="w-full max-w-sm bg-amber-500 hover:bg-amber-400 text-slate-950 py-4 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all">
+                                    <i className="fa-solid fa-download"></i> הורדת תמונת קברניט
+                                </a>
+                            </div>
+                        )}
+
+                        {error && (
+                            <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl flex items-center gap-3">
+                                <i className="fa-solid fa-triangle-exclamation text-red-500"></i>
+                                <p className="text-xs text-red-200">{error}</p>
+                                <button onClick={() => setStep(4)} className="mr-auto bg-red-500 text-white p-2 rounded-lg">
+                                    <i className="fa-solid fa-rotate-right"></i>
+                                </button>
+                            </div>
+                        )}
+                        <div ref={messagesEndRef} />
+                    </main>
+
+                    <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-xl border-t border-slate-800 p-4 pb-8 z-20">
+                        <div className="max-w-2xl mx-auto">
+                            {step === 0 && (
+                                <button onClick={() => { setStep(1); addBotMessage('מעולה! מה שמך המלא, שודד ים?'); }}
+                                    className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 py-4 rounded-2xl font-black text-lg shadow-2xl">
+                                    מוכנים להפלגה! ⚓
+                                </button>
+                            )}
+
+                            {step > 0 && step < 4 && (
+                                <form onSubmit={handleSend} className="flex gap-2">
+                                    <input type="text" value={inputText} onChange={e => setInputText(e.target.value)} 
+                                        placeholder="הקלד כאן..." className="flex-1 bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 text-sm focus:border-amber-500 outline-none text-white" autoFocus />
+                                    <button type="submit" className="bg-amber-500 text-slate-950 w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 transition-all">
+                                        <i className="fa-solid fa-paper-plane text-xl"></i>
+                                    </button>
+                                </form>
+                            )}
+
+                            {step === 4 && !isGenerating && (
+                                <div className="relative">
+                                    <input type="file" accept="image/*" onChange={handleImageUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                    <div className="w-full bg-slate-100 text-slate-950 py-4 rounded-2xl font-bold shadow-2xl flex items-center justify-center gap-3">
+                                        <i className="fa-solid fa-cloud-arrow-up"></i> העלאת תמונת פנים
+                                    </div>
+                                </div>
+                            )}
+
+                            {step === 5 && (
+                                <button onClick={() => window.location.reload()} className="w-full bg-slate-800/50 border border-slate-700 py-3 rounded-xl text-xs text-slate-400">
+                                    התחל תהליך מחדש
+                                </button>
+                            )}
+                        </div>
+                    </footer>
                 </div>
-              </footer>
-            </div>
-          );
+            );
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
