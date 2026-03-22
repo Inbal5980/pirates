@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>סקילז (Skillz) - פיראטים</title>
+    <!-- טעינת ספריות העיצוב והקוד -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-900 text-slate-100 m-0 p-0 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- המפתח והחיבור לשיטס כבר מוכנים בפנים! ---
+        const apiKey = "AIzaSyCxejliuGdzis9rFxPHELjLgNBdwbhkoKQ"; 
+        const googleScriptUrl = "https://script.google.com/macros/s/AKfycbyCRjV9cljtANAiAJX4gIVwr-deYISSLIQOOT_-E2Xlkcaxo-b7MQLaLjyOOlUsIOwiFA/exec";
+
+        // פונקציית המתנה
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // קריאה ל-API ב-2 שלבים
+        const generatePirateImage = async (base64Image, role, mimeType = "image/jpeg") => {
+          let description = "a person";
+          let retries = 3; 
+          let backoff = 1000;
+
+          // שלב 1: חילוץ נראות
+          while (retries > 0) {
+            try {
+              const visionPayload = {
+                contents: [{
+                  role: "user",
+                  parts: [
+                    { text: "Describe the core facial features of the person in this image in 1-2 short sentences (gender, hair color, eye color, glasses, beard, face shape, general age). Be concise and accurate. Do not describe the background or clothing." },
+                    { inlineData: { mimeType: mimeType, data: base64Image } }
+                  ]
+                }]
+              };
+              
+              const visionResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(visionPayload)
+              });
+
+              if (!visionResponse.ok) throw new Error(`Vision HTTP ${visionResponse.status}`);
+              
+              const visionData = await visionResponse.json();
+              const text = visionData.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) description = text;
+              break; 
+            } catch (error) {
+              console.error("Vision API Error:", error);
+              retries--;
+              if (retries === 0) console.warn("Could not get face description, continuing with default");
+              else { await delay(backoff); backoff *= 2; }
+            }
+          }
+
+          // שלב 2: יצירת תמונה
+          const prompt = `A high-quality 3D Pixar-style pirate character avatar. The character has the following physical features: ${description.replace(/\n/g, ' ')}. The character must be dressed in detailed, impressive pirate attire. Include subtle items related to their real-life role: ${role} (e.g., tech items for a developer, a map/compass for a manager, etc). The background should be clean and slightly blurred, suitable for a profile picture.`;
+
+          const imagenPayload = {
+            instances: [{ prompt: prompt }],
+            parameters: { sampleCount: 1 }
+          };
+
+          retries = 3;
+          backoff = 1000;
+
+          while (retries > 0) {
+            try {
+              const imgResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(imagenPayload)
+              });
+
+              if (!imgResponse.ok) {
+                let errMsg = `Imagen HTTP ${imgResponse.status}`;
+                try {
+                  const errData = await imgResponse.json();
+                  errMsg = errData.error?.message || errMsg;
+                } catch(e) {}
+                throw new Error(errMsg);
+              }
+
+              const imgResult = await imgResponse.json();
+              const outputBase64 = imgResult.predictions?.[0]?.bytesBase64Encoded;
+              
+              if (outputBase64) return `data:image/png;base64,${outputBase64}`;
+              else throw new Error("No image data returned from Imagen API");
+
+            } catch (error) {
+              console.error("Imagen API Error after retries:", error);
+              retries--;
+              if (retries === 0) {
+                const safeErr = encodeURIComponent(error.message.substring(0, 60));
+                return `https://placehold.co/600x800/1e293b/ef4444?text=Server+Error:\\n${safeErr}`;
+              }
+              await delay(backoff);
+              backoff *= 2;
+            }
+          }
+        };
+
+        const App = () => {
+          const [step, setStep] = useState(0);
+          const [messages, setMessages] = useState([
+            { sender: 'bot', text: 'אהוי חבר סיפון! 🏴‍☠️ ברוכים הבאים למפגש החברה של סקילז (Skillz)! אני כאן כדי להפוך אותך לפיראט אמיתי. מוכן לצאת להפלגה?' }
+          ]);
+          const [inputText, setInputText] = useState('');
+          const [userData, setUserData] = useState({ name: '', role: '', projects: '', photoBase64: '', photoPreview: '' });
+          const [generatedImage, setGeneratedImage] = useState(null);
+          const [isGenerating, setIsGenerating] = useState(false);
+          const [isSavingToSheets, setIsSavingToSheets] = useState(false);
+          const [dataSaved, setDataSaved] = useState(false);
+          const messagesEndRef = useRef(null);
+
+          const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+
+          useEffect(() => { scrollToBottom(); }, [messages, isGenerating, generatedImage]);
+
+          const addBotMessage = (text) => {
+            setTimeout(() => { setMessages(prev => [...prev, { sender: 'bot', text }]); }, 600);
+          };
+
+          const handleStart = () => {
+            setMessages(prev => [...prev, { sender: 'user', text: 'מוכן קפטן!' }]);
+            setStep(1);
+            addBotMessage('מעולה! בוא נתחיל. מה השם המלא שלך, שודד ים?');
+          };
+
+          const handleSendText = (e) => {
+            e.preventDefault();
+            if (!inputText.trim()) return;
+
+            const currentText = inputText.trim();
+            setMessages(prev => [...prev, { sender: 'user', text: currentText }]);
+            setInputText('');
+
+            switch (step) {
+              case 1:
+                setUserData(prev => ({ ...prev, name: currentText }));
+                setStep(2);
+                addBotMessage(`שם של אלופים, ${currentText}! ומה התפקיד שלך על הסיפון (בספינת סקילז)?`);
+                break;
+              case 2:
+                setUserData(prev => ({ ...prev, role: currentText }));
+                setStep(3);
+                addBotMessage('הבנתי... ומהם הפרויקטים המרכזיים ששדדת... אה, סליחה, שהובלת או השתתפת בהם בחודשים האחרונים?');
+                break;
+              case 3:
+                setUserData(prev => ({ ...prev, projects: currentText }));
+                setStep(4);
+                addBotMessage('שלל מרשים בהחלט! 💰 עכשיו לחלק הכי חשוב: העלה לכאן תמונת פנים ברורה שלך. אני צריך לראות את הפרצוף שאני הולך להפוך לאגדת ים!');
+                break;
+            }
+          };
+
+          const handleFileUpload = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onloadend = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                  try {
+                    const canvas = document.createElement('canvas');
+                    const MAX_DIM = 512; 
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                      if (width > MAX_DIM) { height = Math.round((height * MAX_DIM) / width); width = MAX_DIM; }
+                    } else {
+                      if (height > MAX_DIM) { width = Math.round((width * MAX_DIM) / height); height = MAX_DIM; }
+                    }
+
+                    canvas.width = width; canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    const rawBase64 = compressedDataUrl.split(',')[1];
+                    const mimeType = 'image/jpeg';
+                    
+                    setUserData(prev => ({ ...prev, photoPreview: compressedDataUrl, photoBase64: rawBase64 }));
+                    setMessages(prev => [...prev, { sender: 'user', isImage: true, url: compressedDataUrl }]);
+                    setStep(5);
+                    startGeneration(rawBase64, userData.role, mimeType);
+                  } catch (err) {
+                    console.error("Canvas manipulation error:", err);
+                    addBotMessage('אוי לא! התמונה כבדה מדי למכשיר. נסה לצלם תמונה חדשה או לבחור תמונה פשוטה יותר.');
+                  }
+                };
+                img.onerror = () => addBotMessage('שגיאה בקריאת התמונה. אנא נסה תמונה אחרת.');
+                img.src = event.target.result;
+              };
+              reader.onerror = () => addBotMessage('לא הצלחתי לפתוח את הקובץ. נסה שוב.');
+              reader.readAsDataURL(file);
+            }
+          };
+
+          const startGeneration = async (base64Image, role, mimeType = "image/jpeg") => {
+            addBotMessage('יופי של פרצוף! שתיתי קצת רום, הכנתי את המכחולים הקסומים, ואני מתחיל לעבד את התמונה... זה ייקח קצת זמן, אל תעזוב את הספינה! ⚓');
+            setIsGenerating(true);
+            
+            const imageUrl = await generatePirateImage(base64Image, role, mimeType);
+            
+            setGeneratedImage(imageUrl);
+            setIsGenerating(false);
+            
+            if (googleScriptUrl && !imageUrl.includes("Server+Error")) {
+              setIsSavingToSheets(true);
+              try {
+                await fetch(googleScriptUrl, {
+                  method: 'POST',
+                  mode: 'no-cors', 
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({
+                    name: userData.name, role: userData.role, projects: userData.projects, imageUrl: "תמונה הופקה והוצגה למשתמש" 
+                  })
+                });
+                setDataSaved(true);
+              } catch (error) { console.error("Error saving to Sheets:", error); } 
+              finally { setIsSavingToSheets(false); }
+            }
+
+            setStep(6);
+            addBotMessage('הו הא! תראה את זה! הנה הפיראט שאתה! יצרתי עבורך גרסה מדהימה, מושלמת לפרופיל ה-WhatsApp שלך. לחץ על כפתור ההורדה כדי לשמור אותה אצלך! ⚓');
+          };
+
+          return (
+            <div className="min-h-screen font-sans text-slate-100 flex flex-col relative" dir="rtl">
+              <div className="fixed inset-0 bg-[url('https://i.imgur.com/DqpMeCD.png')] bg-cover bg-center bg-no-repeat -z-20"></div>
+              <div className="fixed inset-0 bg-slate-900/75 -z-10"></div>
+
+              <header className="bg-slate-950/80 backdrop-blur-md p-4 border-b border-amber-900/50 shadow-lg shadow-black/50 flex items-center justify-between sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-amber-600 rounded-full flex items-center justify-center border-2 border-amber-400">
+                    <span className="text-2xl">🏴‍☠️</span>
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold text-amber-500">סקילז (Skillz) - פיראטים</h1>
+                    <p className="text-xs text-slate-400">יוצר הדמויות הרשמי של ספינת החברה</p>
+                  </div>
+                </div>
+                <i className="fas fa-anchor text-amber-700 text-2xl opacity-50"></i>
+              </header>
+
+              <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 space-y-6 max-w-4xl mx-auto w-full z-0">
+                {messages.map((msg, idx) => (
+                  <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] md:max-w-[70%] p-4 rounded-2xl ${
+                      msg.sender === 'user' 
+                        ? 'bg-amber-600 text-white rounded-br-none shadow-md shadow-amber-900/20' 
+                        : 'bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-slate-200 rounded-bl-none shadow-md shadow-black/40'
+                    }`}>
+                      {msg.isImage ? (
+                        <img src={msg.url} alt="User upload" className="w-48 h-48 object-cover rounded-lg border-2 border-amber-500" />
+                      ) : (
+                        <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {isGenerating && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800/90 backdrop-blur-sm border border-slate-700 p-4 rounded-2xl rounded-bl-none flex items-center gap-3">
+                      <i className="fas fa-anchor text-amber-500 animate-spin text-xl"></i>
+                      <span className="text-amber-400 font-medium">הקפטן מצייר... נא להמתין...</span>
+                    </div>
+                  </div>
+                )}
+
+                {step === 6 && generatedImage && (
+                  <div className="mt-8 animate-fade-in-up">
+                    <div className="bg-slate-800/90 backdrop-blur-md border-2 border-amber-600/50 rounded-2xl p-6 shadow-2xl shadow-amber-900/20 max-w-sm mx-auto flex flex-col items-center">
+                      <h2 className="text-2xl font-bold text-center text-amber-500 mb-6 flex items-center justify-center gap-2">
+                        <i className="fas fa-map-marked-alt text-xl"></i>
+                        הדמות של {userData.name}
+                      </h2>
+                      
+                      <div className="w-full flex flex-col gap-6">
+                        <div className="relative group">
+                          <div className="aspect-[3/4] w-full mx-auto rounded-xl overflow-hidden border-4 border-amber-500 shadow-xl relative">
+                            <img src={generatedImage} alt="Generated Pirate Avatar" className="w-full h-full object-cover" />
+                          </div>
+                        </div>
+
+                        {generatedImage.includes("Server+Error") ? (
+                          <button onClick={() => window.location.reload()} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg text-lg">
+                            נסה שוב (רענון למערכת)
+                          </button>
+                        ) : (
+                          <a 
+                            href={generatedImage} 
+                            download={`Pirate_${userData.name.replace(/\s+/g, '_')}.jpg`}
+                            className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg text-lg"
+                          >
+                            <i className="fas fa-download text-xl"></i>
+                            הורד את התמונה למכשיר
+                          </a>
+                        )}
+
+                        {googleScriptUrl && !generatedImage.includes("Server+Error") && (
+                          <div className="text-sm mt-2 text-center">
+                            {isSavingToSheets ? (
+                              <p className="text-amber-500/80 flex items-center justify-center gap-2 font-bold">
+                                <i className="fas fa-anchor animate-spin"></i> מעדכן את ספר הספינה...
+                              </p>
+                            ) : dataSaved ? (
+                              <p className="text-green-400 flex items-center justify-center gap-2 font-bold">
+                                <i className="fas fa-check-circle"></i> הנתונים נשמרו בהצלחה!
+                              </p>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={messagesEndRef} />
+              </main>
+
+              <footer className="fixed bottom-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-800 p-4 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+                <div className="max-w-4xl mx-auto">
+                  {step === 0 && (
+                    <button 
+                      onClick={handleStart}
+                      className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 rounded-xl text-lg transition-colors shadow-lg shadow-amber-900/20"
+                    >
+                      מוכן קפטן! יאללה נתחיל
+                    </button>
+                  )}
+
+                  {(step >= 1 && step <= 3) && (
+                    <form onSubmit={handleSendText} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        placeholder="הקלד את תשובתך כאן..."
+                        className="flex-1 bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-amber-500 transition-colors"
+                        autoFocus
+                      />
+                      <button 
+                        type="submit"
+                        disabled={!inputText.trim()}
+                        className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 text-slate-950 p-3 rounded-xl transition-colors flex items-center justify-center w-14"
+                      >
+                        <i className="fas fa-paper-plane rtl:rotate-180 text-xl"></i>
+                      </button>
+                    </form>
+                  )}
+
+                  {step === 4 && (
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 rounded-xl text-lg transition-colors shadow-lg shadow-amber-900/20 flex items-center justify-center gap-2">
+                        <i className="fas fa-upload text-xl"></i>
+                        <span>העלה תמונת פנים ברורה</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {step >= 5 && (
+                    <div className="text-center text-slate-500 text-sm font-bold">
+                      {step === 5 ? 'מייצר את הדמות שלך...' : 'התהליך הושלם. אהוי!'}
+                    </div>
+                  )}
+                </div>
+              </footer>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
