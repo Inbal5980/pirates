@@ -1,323 +1,452 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Skillz Pirates - Crew Onboarding</title>
-    
-    <!-- CDNs for React, Tailwind, and Icons -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;700;800&display=swap');
-        
-        body {
-            font-family: 'Assistant', sans-serif;
-            background-color: #020617;
-        }
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Upload, Anchor, Map, Download, CheckCircle } from 'lucide-react';
 
-        .animate-spin-slow {
-            animation: spin 8s linear infinite;
-        }
+const apiKey = "";
+const googleScriptUrl = "https://script.google.com/macros/s/AKfycbyCRjV9cljtANAiAJX4gIVwr-deYISSLIQOOT_-E2Xlkcaxo-b7MQLaLjyOOlUsIOwiFA/exec";
 
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
+// Helper function to handle clipboard copying in iframes
+const copyToClipboard = (text) => {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  
+  textArea.style.top = "0";
+  textArea.style.left = "0";
+  textArea.style.position = "fixed";
 
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
-        }
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
 
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
+  try {
+    document.execCommand('copy');
+    return true;
+  } catch (err) {
+    console.error('Fallback: Oops, unable to copy', err);
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+};
 
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 10px;
-        }
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-        .fade-in {
-            animation: fadeIn 0.3s ease-out forwards;
-        }
+// API Call with exponential backoff and a 2-step generation process to bypass 401 errors
+const generatePirateImage = async (base64Image, role, mimeType = "image/jpeg") => {
+  let description = "a person";
+  let retries = 3; 
+  let backoff = 1000;
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+  // שלב 1: שימוש במודל טקסט כדי לתאר את מאפייני הפנים מהתמונה
+  while (retries > 0) {
+    try {
+      const visionPayload = {
+        contents: [{
+          role: "user",
+          parts: [
+            { text: "Describe the core facial features of the person in this image in 1-2 short sentences (gender, hair color, eye color, glasses, beard, face shape, general age). Be concise and accurate. Do not describe the background or clothing." },
+            { inlineData: { mimeType: mimeType, data: base64Image } }
+          ]
+        }]
+      };
+      
+      const visionResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(visionPayload)
+      });
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+      if (!visionResponse.ok) {
+        throw new Error(`Vision HTTP ${visionResponse.status}`);
+      }
 
-        // --- CONFIGURATION ---
-        // לשים כאן את ה-API Key שלך כדי שהאפליקציה תעבוד ב-Netlify
-        const apiKey = "AIzaSyBsoGEngzr3NjAL685aKvKjUFEkgzwr-7MS"; 
+      const visionData = await visionResponse.json();
+      const text = visionData.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) description = text;
+      break; 
+    } catch (error) {
+      console.error("Vision API Error:", error);
+      retries--;
+      if (retries === 0) {
+        console.warn("Could not get face description, continuing with default");
+      } else {
+        await delay(backoff);
+        backoff *= 2;
+      }
+    }
+  }
 
-        const fetchWithRetry = async (url, options, retries = 5) => {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (response.ok) return response;
-                    if (response.status !== 429 && response.status < 500) throw new Error(`API error: ${response.status}`);
-                } catch (err) {
-                    if (i === retries - 1) throw err;
-                }
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  // שלב 2: יצירת התמונה באמצעות Imagen 4 על בסיס התיאור והתפקיד
+  const prompt = `A high-quality 3D Pixar-style pirate character avatar. The character has the following physical features: ${description.replace(/\n/g, ' ')}. The character must be dressed in detailed, impressive pirate attire. Include subtle items related to their real-life role: ${role} (e.g., tech items for a developer, a map/compass for a manager, etc). The background should be clean and slightly blurred, suitable for a profile picture.`;
+
+  const imagenPayload = {
+    instances: [{ prompt: prompt }],
+    parameters: { sampleCount: 1 }
+  };
+
+  retries = 3;
+  backoff = 1000;
+
+  while (retries > 0) {
+    try {
+      const imgResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(imagenPayload)
+      });
+
+      if (!imgResponse.ok) {
+        let errMsg = `Imagen HTTP ${imgResponse.status}`;
+        try {
+          const errData = await imgResponse.json();
+          errMsg = errData.error?.message || errMsg;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
+
+      const imgResult = await imgResponse.json();
+      const outputBase64 = imgResult.predictions?.[0]?.bytesBase64Encoded;
+      
+      if (outputBase64) {
+        return `data:image/png;base64,${outputBase64}`;
+      } else {
+         throw new Error("No image data returned from Imagen API");
+      }
+
+    } catch (error) {
+      console.error("Imagen API Error after retries:", error);
+      retries--;
+      if (retries === 0) {
+        const safeErr = encodeURIComponent(error.message.substring(0, 60));
+        return `https://placehold.co/600x800/1e293b/ef4444?text=Server+Error:\\n${safeErr}`;
+      }
+      await delay(backoff);
+      backoff *= 2;
+    }
+  }
+};
+
+export default function App() {
+  const [step, setStep] = useState(0);
+  const [messages, setMessages] = useState([
+    { sender: 'bot', text: 'אהוי חבר סיפון! 🏴‍☠️ ברוכים הבאים למפגש החברה של סקילז (Skillz)! אני כאן כדי להפוך אותך לפיראט אמיתי. מוכן לצאת להפלגה?' }
+  ]);
+  const [inputText, setInputText] = useState('');
+  const [userData, setUserData] = useState({
+    name: '',
+    role: '',
+    projects: '',
+    photoBase64: '',
+    photoPreview: ''
+  });
+  const [generatedImage, setGeneratedImage] = useState(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isSavingToSheets, setIsSavingToSheets] = useState(false);
+  const [dataSaved, setDataSaved] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isGenerating, generatedImage]);
+
+  const addBotMessage = (text) => {
+    setTimeout(() => {
+      setMessages(prev => [...prev, { sender: 'bot', text }]);
+    }, 600);
+  };
+
+  const handleStart = () => {
+    setMessages(prev => [...prev, { sender: 'user', text: 'מוכן קפטן!' }]);
+    setStep(1);
+    addBotMessage('מעולה! בוא נתחיל. מה השם המלא שלך, שודד ים?');
+  };
+
+  const handleSendText = (e) => {
+    e.preventDefault();
+    if (!inputText.trim()) return;
+
+    const currentText = inputText.trim();
+    setMessages(prev => [...prev, { sender: 'user', text: currentText }]);
+    setInputText('');
+
+    switch (step) {
+      case 1:
+        setUserData(prev => ({ ...prev, name: currentText }));
+        setStep(2);
+        addBotMessage(`שם של אלופים, ${currentText}! ומה התפקיד שלך על הסיפון (בספינת סקילז)?`);
+        break;
+      case 2:
+        setUserData(prev => ({ ...prev, role: currentText }));
+        setStep(3);
+        addBotMessage('הבנתי... ומהם הפרויקטים המרכזיים ששדדת... אה, סליחה, שהובלת או השתתפת בהם בחודשים האחרונים?');
+        break;
+      case 3:
+        setUserData(prev => ({ ...prev, projects: currentText }));
+        setStep(4);
+        addBotMessage('שלל מרשים בהחלט! 💰 עכשיו לחלק הכי חשוב: העלה לכאן תמונת פנים ברורה שלך. אני צריך לראות את הפרצוף שאני הולך להפוך לאגדת ים!');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            const MAX_DIM = 512; 
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+              if (width > MAX_DIM) {
+                height = Math.round((height * MAX_DIM) / width);
+                width = MAX_DIM;
+              }
+            } else {
+              if (height > MAX_DIM) {
+                width = Math.round((width * MAX_DIM) / height);
+                height = MAX_DIM;
+              }
             }
-        };
 
-        const App = () => {
-            const [step, setStep] = useState(0); 
-            const [messages, setMessages] = useState([
-                { sender: 'bot', text: 'אהוי חבר סיפון! 🏴‍☠️ ברוכים הבאים למפגש החברה של סקילז. אני כאן כדי להפוך אותך לפיראט אמיתי! מוכן לצאת להפלגה?' }
-            ]);
-            const [inputText, setInputText] = useState('');
-            const [userData, setUserData] = useState({ name: '', role: '', projects: '' });
-            const [isGenerating, setIsGenerating] = useState(false);
-            const [generatedImage, setGeneratedImage] = useState(null);
-            const [error, setError] = useState(null);
-            const [isConfirmed, setIsConfirmed] = useState(false);
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
             
-            const messagesEndRef = useRef(null);
-            const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, width, height);
+            
+            ctx.drawImage(img, 0, 0, width, height);
 
-            useEffect(() => {
-                scrollToBottom();
-            }, [messages, isGenerating]);
-
-            const addBotMessage = (text) => {
-                setTimeout(() => {
-                    setMessages(prev => [...prev, { sender: 'bot', text }]);
-                }, 600);
-            };
-
-            const handleSend = (e) => {
-                e?.preventDefault();
-                if (!inputText.trim() || isGenerating) return;
-
-                const text = inputText.trim();
-                setMessages(prev => [...prev, { sender: 'user', text }]);
-                setInputText('');
-
-                if (step === 1) {
-                    setUserData(prev => ({ ...prev, name: text }));
-                    addBotMessage(`שם של קפטנים, ${text}! 🦜 ומה התפקיד שלך בספינת סקילז?`);
-                    setStep(2);
-                } else if (step === 2) {
-                    setUserData(prev => ({ ...prev, role: text }));
-                    addBotMessage('מרשים מאוד. על אילו פרויקטים מרכזיים עבדת בחודשים האחרונים?');
-                    setStep(3);
-                } else if (step === 3) {
-                    setUserData(prev => ({ ...prev, projects: text }));
-                    addBotMessage('שלל מרשים בהחלט! 💰 עכשיו, העלה תמונת פנים ברורה כדי שנוכל לבנות את האווטאר שלך.');
-                    setStep(4);
-                }
-            };
-
-            const handleImageUpload = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = async (event) => {
-                    const base64Data = event.target.result.split(',')[1];
-                    setMessages(prev => [...prev, { sender: 'user', text: 'העליתי תמונה!', isImg: true, url: event.target.result }]);
-                    setIsGenerating(true);
-                    setError(null);
-
-                    try {
-                        const visionPrompt = "Describe this person's facial features (gender, hair color/style, eyes, facial hair, glasses) very briefly in one sentence starting with 'A person with...'. Focus on features that define a character's look.";
-                        
-                        const visionResponse = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{
-                                    parts: [
-                                        { text: visionPrompt },
-                                        { inlineData: { mimeType: file.type, data: base64Data } }
-                                    ]
-                                }]
-                            })
-                        });
-
-                        const visionResult = await visionResponse.json();
-                        const description = visionResult.candidates?.[0]?.content?.parts?.[0]?.text || "A person with professional features";
-
-                        const imagePrompt = `A high-quality 3D Disney/Pixar style digital render of a charismatic pirate character. ${description}. The character is wearing modern-styled ornate pirate captain clothing with gold accents. They are in a heroic pose, looking into the distance. Cinematic lighting, vibrant colors, soft blurred tropical background. High resolution, 8k render style.`;
-
-                        const imgResponse = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                instances: { prompt: imagePrompt },
-                                parameters: { sampleCount: 1 }
-                            })
-                        });
-
-                        const imgResult = await imgResponse.json();
-                        if (imgResult.predictions?.[0]?.bytesBase64Encoded) {
-                            const generatedUrl = `data:image/png;base64,${imgResult.predictions[0].bytesBase64Encoded}`;
-                            setGeneratedImage(generatedUrl);
-                            setStep(5);
-                            addBotMessage('הו הא! תראו את הפיראט הזה! 🏴‍☠️ הנה כרטיס הקברניט החדש שלך:');
-                        } else {
-                            throw new Error("נראה שהים סוער מדי... בדוק אם ה-API Key תקין.");
-                        }
-                    } catch (err) {
-                        console.error(err);
-                        setError(err.message);
-                        addBotMessage('סערה בים! משהו השתבש ביצירת הדמות. נסה שוב.');
-                    } finally {
-                        setIsGenerating(false);
-                    }
-                };
-                reader.readAsDataURL(file);
-            };
-
-            return (
-                <div className="flex flex-col h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden" dir="rtl">
-                    <div className="fixed inset-0 pointer-events-none opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-amber-500/20 via-transparent to-transparent"></div>
-                    
-                    <header className="relative z-10 bg-slate-900/80 backdrop-blur-md border-b border-amber-500/30 p-4 flex items-center justify-between shadow-2xl">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/20">
-                                <i className="fa-solid fa-ship text-slate-950 text-xl"></i>
-                            </div>
-                            <div>
-                                <h1 className="text-lg font-bold text-amber-500 tracking-tight">Skillz Pirates</h1>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Crew Onboarding System</p>
-                            </div>
-                        </div>
-                        <i className="fa-solid fa-anchor text-amber-500/40 text-xl"></i>
-                    </header>
-
-                    <main className="flex-1 overflow-y-auto p-4 space-y-4 pb-32 relative z-0 custom-scrollbar">
-                        {messages.map((m, i) => (
-                            <div key={i} className={`flex ${m.sender === 'user' ? 'justify-start flex-row-reverse' : 'justify-start'} fade-in`}>
-                                <div className={`max-w-[85%] p-4 rounded-2xl shadow-xl ${
-                                    m.sender === 'user' 
-                                        ? 'bg-amber-600 text-white rounded-tr-none' 
-                                        : 'bg-slate-900/90 border border-slate-800 text-slate-200 rounded-tl-none backdrop-blur-sm'
-                                }`}>
-                                    {m.isImg ? (
-                                        <div className="space-y-2">
-                                            <img src={m.url} className="w-48 h-48 object-cover rounded-lg border-2 border-amber-500/50" />
-                                            <p className="text-xs opacity-70">מעבד תמונה...</p>
-                                        </div>
-                                    ) : (
-                                        <p className="text-sm leading-relaxed font-medium">{m.text}</p>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-
-                        {isGenerating && (
-                            <div className="flex justify-start fade-in">
-                                <div className="bg-slate-900/90 border border-amber-500/30 p-4 rounded-2xl rounded-tl-none flex items-center gap-4 shadow-xl">
-                                    <i className="fa-solid fa-compass text-amber-500 text-2xl animate-spin-slow"></i>
-                                    <div>
-                                        <span className="text-sm text-amber-400 font-bold block">הקפטן מנווט בים הנתונים...</span>
-                                        <span className="text-[10px] text-slate-500 italic">יוצר אווטאר פיראט מותאם אישית</span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {step === 5 && generatedImage && (
-                            <div className="mt-6 flex flex-col items-center gap-6 fade-in">
-                                <div className="relative group p-2 bg-gradient-to-b from-amber-400 to-amber-700 rounded-3xl shadow-2xl">
-                                    <img src={generatedImage} className="w-72 h-72 object-cover rounded-2xl border-4 border-slate-950 shadow-inner" />
-                                    <div className="absolute bottom-4 left-4 right-4 bg-slate-950/80 backdrop-blur-md p-3 rounded-xl border border-amber-500/50">
-                                        <p className="text-center font-bold text-amber-500 text-sm truncate">{userData.name}</p>
-                                        <p className="text-center text-[10px] text-slate-300 uppercase">{userData.role}</p>
-                                    </div>
-                                </div>
-
-                                <div className="w-full max-w-sm bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl p-4 space-y-3">
-                                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                                        <span className="text-amber-500 text-xs font-bold">קפטן:</span>
-                                        <span className="text-slate-200 text-sm">{userData.name}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                                        <span className="text-amber-500 text-xs font-bold">תפקיד:</span>
-                                        <span className="text-slate-200 text-sm">{userData.role}</span>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <span className="text-amber-500 text-xs font-bold">פרויקטים:</span>
-                                        <p className="text-slate-300 text-xs leading-relaxed italic">"{userData.projects}"</p>
-                                    </div>
-                                </div>
-
-                                <a href={generatedImage} download={`Pirate_${userData.name}.png`} 
-                                   className="w-full max-w-sm bg-amber-500 hover:bg-amber-400 text-slate-950 py-4 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all">
-                                    <i className="fa-solid fa-download"></i> הורדת תמונת קברניט
-                                </a>
-                            </div>
-                        )}
-
-                        {error && (
-                            <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl flex items-center gap-3">
-                                <i className="fa-solid fa-triangle-exclamation text-red-500"></i>
-                                <p className="text-xs text-red-200">{error}</p>
-                                <button onClick={() => setStep(4)} className="mr-auto bg-red-500 text-white p-2 rounded-lg">
-                                    <i className="fa-solid fa-rotate-right"></i>
-                                </button>
-                            </div>
-                        )}
-                        <div ref={messagesEndRef} />
-                    </main>
-
-                    <footer className="fixed bottom-0 left-0 right-0 bg-slate-900/90 backdrop-blur-xl border-t border-slate-800 p-4 pb-8 z-20">
-                        <div className="max-w-2xl mx-auto">
-                            {step === 0 && (
-                                <button onClick={() => { setStep(1); addBotMessage('מעולה! מה שמך המלא, שודד ים?'); }}
-                                    className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 py-4 rounded-2xl font-black text-lg shadow-2xl">
-                                    מוכנים להפלגה! ⚓
-                                </button>
-                            )}
-
-                            {step > 0 && step < 4 && (
-                                <form onSubmit={handleSend} className="flex gap-2">
-                                    <input type="text" value={inputText} onChange={e => setInputText(e.target.value)} 
-                                        placeholder="הקלד כאן..." className="flex-1 bg-slate-800/50 border border-slate-700 rounded-2xl px-5 py-4 text-sm focus:border-amber-500 outline-none text-white" autoFocus />
-                                    <button type="submit" className="bg-amber-500 text-slate-950 w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 transition-all">
-                                        <i className="fa-solid fa-paper-plane text-xl"></i>
-                                    </button>
-                                </form>
-                            )}
-
-                            {step === 4 && !isGenerating && (
-                                <div className="relative">
-                                    <input type="file" accept="image/*" onChange={handleImageUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
-                                    <div className="w-full bg-slate-100 text-slate-950 py-4 rounded-2xl font-bold shadow-2xl flex items-center justify-center gap-3">
-                                        <i className="fa-solid fa-cloud-arrow-up"></i> העלאת תמונת פנים
-                                    </div>
-                                </div>
-                            )}
-
-                            {step === 5 && (
-                                <button onClick={() => window.location.reload()} className="w-full bg-slate-800/50 border border-slate-700 py-3 rounded-xl text-xs text-slate-400">
-                                    התחל תהליך מחדש
-                                </button>
-                            )}
-                        </div>
-                    </footer>
-                </div>
-            );
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            const rawBase64 = compressedDataUrl.split(',')[1];
+            const mimeType = 'image/jpeg';
+            
+            setUserData(prev => ({ 
+              ...prev, 
+              photoPreview: compressedDataUrl,
+              photoBase64: rawBase64
+            }));
+            
+            setMessages(prev => [...prev, { sender: 'user', isImage: true, url: compressedDataUrl }]);
+            setStep(5);
+            startGeneration(rawBase64, userData.role, mimeType);
+          } catch (err) {
+            console.error("Canvas manipulation error:", err);
+            addBotMessage('אוי לא! התמונה כבדה מדי למכשיר. נסה לצלם תמונה חדשה או לבחור תמונה פשוטה יותר.');
+          }
         };
+        img.onerror = () => {
+          addBotMessage('שגיאה בקריאת התמונה. אנא נסה תמונה אחרת.');
+        };
+        img.src = event.target.result;
+      };
+      reader.onerror = () => {
+        addBotMessage('לא הצלחתי לפתוח את הקובץ. נסה שוב.');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+  const startGeneration = async (base64Image, role, mimeType = "image/jpeg") => {
+    addBotMessage('יופי של פרצוף! שתיתי קצת רום, הכנתי את המכחולים הקסומים, ואני מתחיל לעבד את התמונה... זה ייקח קצת זמן, אל תעזוב את הספינה! ⚓');
+    setIsGenerating(true);
+    
+    const imageUrl = await generatePirateImage(base64Image, role, mimeType);
+    
+    setGeneratedImage(imageUrl);
+    setIsGenerating(false);
+    
+    if (googleScriptUrl && !imageUrl.includes("Server+Error")) {
+      setIsSavingToSheets(true);
+      try {
+        await fetch(googleScriptUrl, {
+          method: 'POST',
+          mode: 'no-cors', 
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            name: userData.name,
+            role: userData.role,
+            projects: userData.projects,
+            imageUrl: "תמונה הופקה והוצגה למשתמש" 
+          })
+        });
+        
+        setDataSaved(true);
+      } catch (error) {
+        console.error("Error saving to Sheets:", error);
+      } finally {
+        setIsSavingToSheets(false);
+      }
+    }
+
+    setStep(6);
+    addBotMessage('הו הא! תראה את זה! הנה הפיראט שאתה! יצרתי עבורך גרסה מדהימה, מושלמת לפרופיל ה-WhatsApp שלך. לחץ על כפתור ההורדה כדי לשמור אותה אצלך! ⚓');
+  };
+
+  return (
+    <div className="min-h-screen font-sans text-slate-100 flex flex-col relative" dir="rtl">
+      <div className="fixed inset-0 bg-[url('https://i.imgur.com/DqpMeCD.png')] bg-cover bg-center bg-no-repeat -z-20"></div>
+      <div className="fixed inset-0 bg-slate-900/75 -z-10"></div>
+
+      <header className="bg-slate-950/80 backdrop-blur-md p-4 border-b border-amber-900/50 shadow-lg shadow-black/50 flex items-center justify-between sticky top-0 z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-amber-600 rounded-full flex items-center justify-center border-2 border-amber-400">
+            <span className="text-2xl">🏴‍☠️</span>
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-amber-500">סקילז (Skillz) - פיראטים</h1>
+            <p className="text-xs text-slate-400">יוצר הדמויות הרשמי של ספינת החברה</p>
+          </div>
+        </div>
+        <Anchor className="text-amber-700 w-8 h-8 opacity-50" />
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 space-y-6 max-w-4xl mx-auto w-full z-0">
+        {messages.map((msg, idx) => (
+          <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] md:max-w-[70%] p-4 rounded-2xl ${
+              msg.sender === 'user' 
+                ? 'bg-amber-600 text-white rounded-br-none shadow-md shadow-amber-900/20' 
+                : 'bg-slate-800/90 backdrop-blur-sm border border-slate-700 text-slate-200 rounded-bl-none shadow-md shadow-black/40'
+            }`}>
+              {msg.isImage ? (
+                <img src={msg.url} alt="User upload" className="w-48 h-48 object-cover rounded-lg border-2 border-amber-500" />
+              ) : (
+                <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {isGenerating && (
+          <div className="flex justify-start">
+            <div className="bg-slate-800/90 backdrop-blur-sm border border-slate-700 p-4 rounded-2xl rounded-bl-none flex items-center gap-3">
+              <Anchor className="w-6 h-6 text-amber-500 animate-spin" />
+              <span className="text-amber-400 font-medium">הקפטן מצייר... נא להמתין...</span>
+            </div>
+          </div>
+        )}
+
+        {step === 6 && generatedImage && (
+          <div className="mt-8 animate-fade-in-up">
+            <div className="bg-slate-800/90 backdrop-blur-md border-2 border-amber-600/50 rounded-2xl p-6 shadow-2xl shadow-amber-900/20 max-w-sm mx-auto flex flex-col items-center">
+              <h2 className="text-2xl font-bold text-center text-amber-500 mb-6 flex items-center justify-center gap-2">
+                <Map className="w-6 h-6" />
+                הדמות של {userData.name}
+              </h2>
+              
+              <div className="w-full flex flex-col gap-6">
+                <div className="relative group">
+                  <div className="aspect-[3/4] w-full mx-auto rounded-xl overflow-hidden border-4 border-amber-500 shadow-xl relative">
+                    <img src={generatedImage} alt="Generated Pirate Avatar" className="w-full h-full object-cover" />
+                  </div>
+                </div>
+
+                {generatedImage.includes("Server+Error") ? (
+                  <button onClick={() => window.location.reload()} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg text-lg">
+                    נסה שוב (רענון למערכת)
+                  </button>
+                ) : (
+                  <a 
+                    href={generatedImage} 
+                    download={`Pirate_${userData.name.replace(/\s+/g, '_')}.jpg`}
+                    className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg text-lg"
+                  >
+                    <Download className="w-6 h-6" />
+                    הורד את התמונה למכשיר
+                  </a>
+                )}
+
+                {googleScriptUrl && !generatedImage.includes("Server+Error") && (
+                  <div className="text-sm mt-2 text-center">
+                    {isSavingToSheets ? (
+                      <p className="text-amber-500/80 flex items-center justify-center gap-2 font-bold">
+                        <Anchor className="w-4 h-4 animate-spin" />
+                        מעדכן את ספר הספינה...
+                      </p>
+                    ) : dataSaved ? (
+                      <p className="text-green-400 flex items-center justify-center gap-2 font-bold">
+                        <CheckCircle className="w-4 h-4" />
+                        הנתונים נשמרו בהצלחה!
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </main>
+
+      <footer className="fixed bottom-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-800 p-4 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+        <div className="max-w-4xl mx-auto">
+          {step === 0 && (
+            <button 
+              onClick={handleStart}
+              className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 rounded-xl text-lg transition-colors shadow-lg shadow-amber-900/20"
+            >
+              מוכן קפטן! יאללה נתחיל
+            </button>
+          )}
+
+          {(step >= 1 && step <= 3) && (
+            <form onSubmit={handleSendText} className="flex gap-2">
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="הקלד את תשובתך כאן..."
+                className="flex-1 bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-amber-500 transition-colors"
+                autoFocus
+              />
+              <button 
+                type="submit"
+                disabled={!inputText.trim()}
+                className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 text-slate-950 p-3 rounded-xl transition-colors flex items-center justify-center w-14"
+              >
+                <Send className="w-6 h-6 rtl:rotate-180" />
+              </button>
+            </form>
+          )}
+
+          {step === 4 && (
+            <div className="relative">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <div className="w-full bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold py-4 rounded-xl text-lg transition-colors shadow-lg shadow-amber-900/20 flex items-center justify-center gap-2">
+                <Upload className="w-6 h-6" />
+                <span>העלה תמונת פנים ברורה</span>
+              </div>
+            </div>
+          )}
+
+          {step >= 5 && (
+            <div className="text-center text-slate-500 text-sm font-bold">
+              {step === 5 ? 'מייצר את הדמות שלך...' : 'התהליך הושלם. אהוי!'}
+            </div>
+          )}
+        </div>
+      </footer>
+    </div>
+  );
+}
